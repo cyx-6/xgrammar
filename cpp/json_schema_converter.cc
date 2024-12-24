@@ -142,6 +142,9 @@ class JSONSchemaConverter {
   // The name of the helper rules to construct basic rules
   inline static const std::string kBasicEscape = "basic_escape";
   inline static const std::string kBasicStringSub = "basic_string_sub";
+  inline static const std::string kBasicAlpha = "basic_alpha";
+  inline static const std::string kBasicDigit = "basic_digit";
+  inline static const std::string kBasicMailbox = "basic_rfc5321_mailbox";
 
   /*! \brief Add the basic rules to the rules list and the basic_rules_cache. */
   void AddBasicRules();
@@ -440,6 +443,51 @@ void JSONSchemaConverter::AddHelperRules() {
       kBasicStringSub,
       "(\"\\\"\" | [^\"\\\\\\r\\n] " + kBasicStringSub + " | \"\\\\\" " + kBasicEscape + " " +
           kBasicStringSub + ") (= [ \\n\\t]* [,}\\]:])"
+  ));
+  rules_.push_back(std::make_pair(kBasicAlpha, "[A-Za-z]"));
+  rules_.push_back(std::make_pair(kBasicDigit, "[0-9]"));
+  // email format, rfc 5321, rfc 5322
+  // local part
+  rules_.push_back(std::make_pair(
+      "_rfc5322_atext", kBasicAlpha + " | " + kBasicDigit + " | [!#$%&'*+/=?^_`{|}~] | [-]"
+
+  ));
+  rules_.push_back(std::make_pair("_rfc5322_atom", "(_rfc5322_atext)+"));
+  rules_.push_back(std::make_pair("_rfc5321_Dot-string", "_rfc5322_atom (\".\" _rfc5322_atom)*"));
+  rules_.push_back(std::make_pair(
+      "_rfc5321_qtextSMTP",
+      kBasicAlpha + " | " + kBasicDigit +
+          " | [ !#$%&'()*+,./:;<=>?@^_`{|}~] | [-] | \"[\" | \"\\\\\" | \"]\""
+  ));
+  rules_.push_back(std::make_pair(
+      "_rfc5321_quoted-pairSMTP",
+      "\"\\\\\" (" + kBasicAlpha + " | " + kBasicDigit +
+          " | [ !\"#$%&'()*+,./:;<=>?@^_`{|}~] | [-] | \"[\" | \"\\\\\" | \"]\")"
+  ));
+  rules_.push_back(
+      std::make_pair("_rfc5321_QcontentSMTP", "(_rfc5321_qtextSMTP | _rfc5321_quoted-pairSMTP)")
+  );
+  rules_.push_back(
+      std::make_pair("_rfc5321_Quoted-string", "[\\\\][\"] (_rfc5321_QcontentSMTP)* [\\\\] [\"]")
+  );
+  rules_.push_back(
+      std::make_pair("_rfc5321_Local-part", "(_rfc5321_Dot-string | _rfc5321_Quoted-string)")
+  );
+  // domain
+  rules_.push_back(std::make_pair("_rfc5321_Let-dig", kBasicAlpha + " | " + kBasicDigit));
+  rules_.push_back(std::make_pair(
+      "_rfc5321_Ldh-str", "(" + kBasicAlpha + " | " + kBasicDigit + " | \"-\")* _rfc5321_Let-dig"
+  ));
+  rules_.push_back(std::make_pair("_rfc5321_sub-domain", "_rfc5321_Let-dig (_rfc5321_Ldh-str)?"));
+  rules_.push_back(
+      std::make_pair("_rfc5321_Domain", "_rfc5321_sub-domain (\".\" _rfc5321_sub-domain)*")
+  );
+  // address literal
+  // TODO: Add rules
+  rules_.push_back(std::make_pair("_rfc5321_address-literal", "_rfc5321_Domain"));
+  // email
+  rules_.push_back(std::make_pair(
+      kBasicMailbox, "_rfc5321_Local-part \"@\" ( _rfc5321_Domain | _rfc5321_address-literal )"
   ));
 }
 
@@ -869,6 +917,12 @@ std::string JSONSchemaConverter::VisitString(
 ) {
   XGRAMMAR_CHECK(schema.count("type"));
   XGRAMMAR_CHECK(schema.at("type").get<std::string>() == "string");
+  if (schema.count("format")) {
+    std::string format = schema.at("format").get<std::string>();
+    if (format == "email") {
+      return "[\"] " + kBasicMailbox + " [\"]";
+    }
+  }
   WarnUnsupportedKeywords(
       schema,
       {
